@@ -847,7 +847,13 @@ class exporter(object):
         individual_inserted = False
         for i in self.generator.getData(
             "res.partner",
-            search=["|", ("parent_id", "=", False), ("parent_id.active", "=", True)],
+            search=[
+                "&",
+                ("is_company", "=", True),
+                "|",
+                ("parent_id", "=", False),
+                ("parent_id.active", "=", True),
+            ],
             fields=["name", "parent_id", "is_company"],
             order="parent_id desc",
         ):
