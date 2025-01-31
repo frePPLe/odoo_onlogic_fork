@@ -271,7 +271,12 @@ class importer(object):
                     ordertype = elem.get("ordertype")
                     if ordertype == "PO":
 
-                        supplier_id = int(elem.get("supplier").rsplit(" ", 1)[-1])
+                        supplier_id = int(
+                            elem.get("supplier")
+                            .rsplit(" ", 1)
+                            .replace("(", "")
+                            .replace(")", "")[-1]
+                        )
                         quantity = float(elem.get("quantity"))
                         date_planned = elem.get("end")
                         if date_planned:

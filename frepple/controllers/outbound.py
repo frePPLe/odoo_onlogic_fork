@@ -850,13 +850,7 @@ class exporter(object):
         individual_inserted = False
         for i in self.generator.getData(
             "res.partner",
-            search=[
-                "&",
-                ("is_company", "=", True),
-                "|",
-                ("parent_id", "=", False),
-                ("parent_id.active", "=", True),
-            ],
+            search=["|", ("parent_id", "=", False), ("parent_id.active", "=", True)],
             fields=["name", "parent_id", "is_company"],
             order="parent_id desc",
         ):
@@ -880,7 +874,7 @@ class exporter(object):
             else:
                 if i["parent_id"][0] in self.map_customers:
                     name = str(self.map_customers[i["parent_id"][0]])
-                    supplier = "%s %s" % (i["parent_id"][1], i["parent_id"][0])
+                    supplier = "%s (%s)" % (i["parent_id"][1], i["parent_id"][0])
                 else:
                     continue
 
