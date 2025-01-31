@@ -1909,15 +1909,22 @@ class exporter(object):
         """
         # Get all sales order lines
         search = (
-            [("product_id", "!=", False)]
+            [
+                "&",
+                ("product_id", "!=", False),
+                ("order_id.state", "not in", ("draft", "sent")),
+            ]
             if self.delta >= 999
             else [
+                "&",
+                "&",
                 ("product_id", "!=", False),
                 (
                     "write_date",
                     ">=",
                     datetime.now() - timedelta(days=self.delta),
                 ),
+                ("order_id.state", "not in", ("draft", "sent")),
             ]
         )
         so_line = self.generator.getData(
