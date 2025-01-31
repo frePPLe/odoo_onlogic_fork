@@ -1116,29 +1116,6 @@ class exporter(object):
         # needs to be unique
         use_short_names = True
 
-        self.generator.env.cr.execute(
-            """
-            select count(*) from
-            (
-            select coalesce(product_product.default_code,
-            product_template.name->>%s,
-            product_template.name->>'en_US'), count(*)
-            from product_product
-            inner join product_template on product_product.product_tmpl_id = product_template.id
-            where product_template.type not in ('service', 'consu')
-            group by coalesce(product_product.default_code,
-            product_template.name->>%s,
-            product_template.name->>'en_US')
-            having count(*) > 1
-            ) t
-                """,
-            (self.language, self.language),
-        )
-        for i in self.generator.env.cr.fetchall():
-            if i[0] > 0:
-                use_short_names = False
-                break
-
         logger.info(
             "finished figuring out if we can use short names after %.2f seconds"
             % (time() - starttime,)
@@ -1200,8 +1177,14 @@ class exporter(object):
                 # "price_extra",
             ],
             search=[
-                ("id", "!=", 162071)
-            ],  # the product_template_attribute_value_ids of that product makes the orm crash
+                "&",
+                (
+                    "id",
+                    "!=",
+                    162071,
+                ),  # the product_template_attribute_value_ids of that product makes the orm crash
+                ("default_code", "!=", False),
+            ],
         ):
             logger.info(
                 "reading product %s %s %.2f" % (i["id"], i["name"], time() - starttime)
@@ -1250,10 +1233,7 @@ class exporter(object):
                 quoteattr(tmpl["uom_id"][1]) if tmpl["uom_id"] else "",
                 i["volume"] or 0,
                 i["weight"] or 0,
-                max(
-                    0, (tmpl["list_price"]) or 0
-                )  # Option 1:  Map "sales price" to frepple
-                #  max(0, tmpl["standard_price"]) or 0)  # Option 2: Map the "cost" to frepple
+                max(0, (tmpl["standard_price"]) or 0)
                 / self.convert_qty_uom(1.0, tmpl["uom_id"], i["product_tmpl_id"][0]),
                 tmpl["uom_id"][0],
                 i["id"],
