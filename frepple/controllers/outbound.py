@@ -1090,8 +1090,6 @@ class exporter(object):
             if v["name"] == "Replenish on Order (MTO)":
                 self.route_mto = k
 
-        starttime = time()
-
         for i in self.generator.getData(
             "product.template",
             search=[("type", "not in", ("service", "consu"))],
@@ -1115,20 +1113,10 @@ class exporter(object):
         ):
             self.product_templates[i["id"]] = i
 
-        logger.info(
-            "finished reading product_template after %.2f seconds"
-            % (time() - starttime,)
-        )
-
         # Check if we can use short names
         # To use short names, the internal reference (or the name when no internal reference is defined)
         # needs to be unique
         use_short_names = True
-
-        logger.info(
-            "finished figuring out if we can use short names after %.2f seconds"
-            % (time() - starttime,)
-        )
 
         supplierinfo_fields = [
             "product_tmpl_id",
@@ -1148,10 +1136,7 @@ class exporter(object):
                 fields=supplierinfo_fields,
                 search=[("product_tmpl_id", "!=", False)],
             )
-            logger.info(
-                "finished reading product.supplierinfo after %.2f seconds"
-                % (time() - starttime,)
-            )
+
         except Exception:
             # subcontracting module not installed
             supplierinfo_fields.remove("is_subcontractor")
@@ -1160,10 +1145,7 @@ class exporter(object):
                 fields=supplierinfo_fields,
                 search=[("product_tmpl_id", "!=", False)],
             )
-            logger.info(
-                "finished reading product.supplierinfo without subcontracting after %.2f seconds"
-                % (time() - starttime,)
-            )
+
         itemsuppliers = {}
         for i in tmp:
             if i["product_tmpl_id"][0] in itemsuppliers:
@@ -1189,9 +1171,6 @@ class exporter(object):
                 ("default_code", "!=", False),
             ],
         ):
-            logger.info(
-                "reading product %s %s %.2f" % (i["id"], i["name"], time() - starttime)
-            )
             if first:
                 yield "<!-- products -->\n"
                 yield "<items>\n"
