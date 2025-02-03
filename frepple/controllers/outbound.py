@@ -1186,12 +1186,6 @@ class exporter(object):
                 # "price_extra",
             ],
             search=[
-                "&",
-                (
-                    "id",
-                    "!=",
-                    162071,
-                ),  # the product_template_attribute_value_ids of that product makes the orm crash
                 ("default_code", "!=", False),
             ],
         ):
