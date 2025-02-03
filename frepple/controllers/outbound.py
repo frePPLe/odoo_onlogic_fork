@@ -834,6 +834,12 @@ class exporter(object):
                 self.map_locations[loc_object["id"]] = self.warehouses[
                     loc_object["warehouse_id"][0]
                 ]
+            else:
+                # onlogic: the link between the locations and the warehouses is broken.
+                # As only one warehouse exists, we associate the location to the first warehouse
+                self.map_locations[loc_object["id"]] = next(
+                    iter(self.warehouses.values()), None
+                )
 
     def export_customers(self):
         """
