@@ -899,7 +899,7 @@ class exporter(object):
                     first = False
                 if i["is_company"]:
                     name = str(i["id"])
-                    supplier = "%s %s" % (i["name"], i["id"])
+                    supplier = "%s (%s)" % (i["name"], i["id"])
                     yield '<customer name="%s" description=%s/>\n' % (
                         name,
                         quoteattr(i["name"][:300]),
@@ -913,7 +913,7 @@ class exporter(object):
                 else:
                     if i["parent_id"][0] in self.map_customers:
                         name = str(self.map_customers[i["parent_id"][0]])
-                        supplier = "%s %s" % (i["parent_id"][1], i["parent_id"][0])
+                        supplier = "%s (%s)" % (i["parent_id"][1], i["parent_id"][0])
                     else:
                         continue
 
