@@ -1925,7 +1925,7 @@ class exporter(object):
             [
                 "&",
                 ("product_id", "!=", False),
-                ("order_id.state", "not in", ("draft", "sent")),
+                ("order_id.state", "not in", ("draft", "sent", "review")),
             ]
             if self.delta >= 999
             else [
@@ -1937,7 +1937,7 @@ class exporter(object):
                     ">=",
                     datetime.now() - timedelta(days=self.delta),
                 ),
-                ("order_id.state", "not in", ("draft", "sent")),
+                ("order_id.state", "not in", ("draft", "sent", "review")),
             ]
         )
         so_line = self.generator.getData(
