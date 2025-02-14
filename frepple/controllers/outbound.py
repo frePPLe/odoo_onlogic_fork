@@ -1136,6 +1136,7 @@ class exporter(object):
                 "categ_id",
                 "product_variant_ids",
                 "route_ids",
+                "default_code",
             ]
             + (
                 [
@@ -1275,6 +1276,13 @@ class exporter(object):
                     else ""
                 ),
             )
+
+            # for the products that are variants, we are sending the template as an item attribute
+            if len(tmpl["product_variant_ids"]) > 1:
+                yield '<stringproperty name="product_template" value=%s/>' % (
+                    quoteattr("%s @ %s" % (tmpl["default_code"] or "", tmpl["id"])),
+                )
+
             # Export suppliers for the item, if the item is allowed to be purchased
             if tmpl["purchase_ok"]:
                 suppliers = {}
