@@ -1137,6 +1137,7 @@ class exporter(object):
                 "product_variant_ids",
                 "route_ids",
                 "default_code",
+                "product_state_id",
             ]
             + (
                 [
@@ -1281,6 +1282,11 @@ class exporter(object):
             if len(tmpl["product_variant_ids"]) > 1:
                 yield '<stringproperty name="product_template" value=%s/>' % (
                     quoteattr("%s @ %s" % (tmpl["default_code"] or "", tmpl["id"])),
+                )
+
+            if tmpl["product_state_id"]:
+                yield '<stringproperty name="state" value=%s/>' % (
+                    quoteattr(tmpl["product_state_id"][1])
                 )
 
             # Export suppliers for the item, if the item is allowed to be purchased
@@ -2243,9 +2249,9 @@ class exporter(object):
                         "not in",
                         # Comment out on of the following alternative approaches:
                         # Alternative I: don't send RFQs to frepple because that supply isn't certain to be available yet.
-                        ("draft", "sent", "bid", "to approve", "confirmed", "cancel"),
+                        # ("draft", "sent", "bid", "to approve", "confirmed", "cancel"),
                         # Alternative II: send RFQs to frepple to avoid that the same purchasing proposal is generated again by frepple.
-                        # ("bid", "confirmed", "cancel"),
+                        ("bid", "confirmed", "cancel"),
                     ),
                     ("order_id.state", "=", False),
                     "|",
