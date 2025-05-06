@@ -314,6 +314,8 @@ class exporter(object):
         logger.debug("Exporting BOMs.")
         if self.mode == 1:
             yield from self.export_boms()
+        logger.debug("Exporting sales blanket orders.")
+        yield from self.export_blanketorders()
         logger.debug("Exporting sales orders.")
         yield from self.export_salesorders()
         # Uncomment the following lines to create forecast models in frepple
@@ -1906,6 +1908,47 @@ class exporter(object):
                         yield "</suboperations>\n"
                     yield "</operation>\n"
         yield "</operations>\n"
+
+    def export_blanketorders(self):
+        """
+        Sales blanket orders are read as sales orders using the OCA module
+        """
+        yield "<!-- sales blanket order lines -->\n"
+        yield "<demands>\n"
+        for i in self.generator.getData(
+            "sale.blanket.order.line",
+            search=[
+                "&",
+                ("remaining_qty", ">", "0"),
+                ("order_id.validity_date", ">", datetime.now()),
+            ],
+            fields=["product_id", "remaining_qty", "date_schedule"],
+            object=True,
+        ):
+            customer = self.map_customers.get(i.order_id.partner_id.id)
+            product = self.product_product.get(i.product_id.id, None)
+            if not customer or not product:
+                continue
+            yield (
+                '<demand name=%s  quantity="%s" due="%s" priority="%s" minshipment="%s" status="%s"><item name=%s/><customer name=%s/><location name=%s/></demand>'
+                % (
+                    quoteattr(f"{i.order_id.name} {i.id}"),
+                    i.remaining_qty,
+                    self.formatDateTime(
+                        datetime.combine(
+                            i.date_schedule or i.order_id.validity_date,
+                            datetime.min.time(),
+                        )
+                    ),
+                    10,
+                    1,
+                    "open",
+                    quoteattr(product["name"]),
+                    quoteattr(customer),
+                    quoteattr(self.mfg_location),
+                )
+            )
+        yield "</demands>\n"
 
     def export_salesorders(self):
         """
