@@ -915,7 +915,10 @@ class exporter(object):
                 else:
                     if i["parent_id"][0] in self.map_customers:
                         name = str(self.map_customers[i["parent_id"][0]])
-                        supplier = "%s (%s)" % (i["parent_id"][1], i["parent_id"][0])
+                        supplier = "%s (%s)" % (
+                            (i["parent_id"][1])[:280],
+                            i["parent_id"][0],
+                        )
                     else:
                         continue
 
