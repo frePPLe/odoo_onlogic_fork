@@ -877,7 +877,7 @@ class exporter(object):
         first = True
         individual_inserted = False
         offset = 0
-        pagesize = 25000
+        pagesize = 2500000
         while True:
             recs = self.generator.getData(
                 "res.partner",
