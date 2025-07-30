@@ -877,8 +877,11 @@ class exporter(object):
         first = True
         individual_inserted = False
         offset = 0
-        pagesize = 2500000
+        pagesize = 10000
         while True:
+            logger.debug(
+                f"retrieving customer records from {offset} to {offset+pagesize}"
+            )
             recs = self.generator.getData(
                 "res.partner",
                 fields=["name", "parent_id", "is_company"],
