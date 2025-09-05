@@ -273,9 +273,9 @@ class importer(object):
 
                         supplier_id = int(
                             elem.get("supplier")
-                            .rsplit(" ", 1)
+                            .rsplit(" ", 1)[1]
                             .replace("(", "")
-                            .replace(")", "")[-1]
+                            .replace(")", "")
                         )
                         quantity = float(elem.get("quantity"))
                         date_planned = elem.get("end")
