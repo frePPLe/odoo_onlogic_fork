@@ -310,6 +310,7 @@ class exporter(object):
             yield from self.export_workcenterskills()
         logger.debug("Exporting products.")
         yield from self.export_item_hierarchy()
+        self.export_reporting_hierarchy()
         yield from self.export_items()
         logger.debug("Exporting BOMs.")
         if self.mode == 1:
@@ -1055,6 +1056,17 @@ class exporter(object):
         if not first:
             yield "</resources>\n"
 
+    def export_reporting_hierarchy(self):
+        self.reporting_categories = {}
+        for i in self.generator.getData(
+            "product.reporting.system",
+            search=[],
+            fields=[
+                "display_name",
+            ],
+        ):
+            self.reporting_categories[i["id"]] = i["display_name"]
+
     def export_item_hierarchy(self):
         """
         Creates an item in frepple for each category that will be then used
@@ -1142,6 +1154,7 @@ class exporter(object):
                 "standard_price",
                 "uom_id",
                 "categ_id",
+                "reporting_system_id",
                 "product_variant_ids",
                 "route_ids",
                 "default_code",
@@ -1295,6 +1308,13 @@ class exporter(object):
             if tmpl["product_state_id"]:
                 yield '<stringproperty name="state" value=%s/>' % (
                     quoteattr(tmpl["product_state_id"][1])
+                )
+
+            if tmpl["reporting_system_id"]:
+                yield '<stringproperty name="reporting_category" value=%s/>' % (
+                    quoteattr(
+                        self.reporting_categories.get(tmpl["reporting_system_id"][0])
+                    )
                 )
 
             # Export suppliers for the item, if the item is allowed to be purchased
