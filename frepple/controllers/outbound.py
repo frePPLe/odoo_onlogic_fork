@@ -886,7 +886,7 @@ class exporter(object):
             recs = self.generator.getData(
                 "res.partner",
                 fields=["name", "parent_id", "is_company"],
-                order="parent_id desc",
+                order="parent_id desc, id asc",
                 offset=offset,
                 limit=pagesize,
             )
