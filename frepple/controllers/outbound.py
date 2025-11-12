@@ -879,6 +879,8 @@ class exporter(object):
         individual_inserted = False
         offset = 0
         pagesize = 10000
+        children = {}
+        roots = []
         while True:
             logger.debug(
                 f"retrieving customer records from {offset} to {offset+pagesize}"
@@ -894,40 +896,56 @@ class exporter(object):
                 break
             offset += pagesize
             for i in recs:
+                if i["parent_id"]:
+                    children.setdefault(i["parent_id"][0], []).append(i)
+                else:
+                    roots.append(i)
 
-                # We don't kow that parent (archived ?) so continue
-                if i["parent_id"] and i["parent_id"][0] not in self.map_customers:
+        ordered = []
+
+        def visit(node):
+            ordered.append(node)
+            for child in children.get(node["id"], []):
+                visit(child)
+
+        for root in roots:
+            visit(root)
+
+        for i in ordered:
+
+            # We don't kow that parent (archived ?) so continue
+            if i["parent_id"] and i["parent_id"][0] not in self.map_customers:
+                continue
+
+            if first:
+                yield "<!-- customers -->\n"
+                yield "<customers>\n"
+                first = False
+            if i["is_company"]:
+                name = str(i["id"])
+                supplier = "%s (%s)" % (i["name"], i["id"])
+                yield '<customer name="%s" description=%s/>\n' % (
+                    name,
+                    quoteattr(i["name"]),
+                )
+            elif i["parent_id"] == False or i["id"] == i["parent_id"][0]:
+                name = "Individuals"
+                supplier = "Individuals"
+                if not individual_inserted:
+                    yield "<customer name=%s/>\n" % quoteattr(name)
+                    individual_inserted = True
+            else:
+                if i["parent_id"][0] in self.map_customers:
+                    name = str(self.map_customers[i["parent_id"][0]])
+                    supplier = "%s (%s)" % (
+                        (i["parent_id"][1]),
+                        i["parent_id"][0],
+                    )
+                else:
                     continue
 
-                if first:
-                    yield "<!-- customers -->\n"
-                    yield "<customers>\n"
-                    first = False
-                if i["is_company"]:
-                    name = str(i["id"])
-                    supplier = "%s (%s)" % (i["name"], i["id"])
-                    yield '<customer name="%s" description=%s/>\n' % (
-                        name,
-                        quoteattr(i["name"][:300]),
-                    )
-                elif i["parent_id"] == False or i["id"] == i["parent_id"][0]:
-                    name = "Individuals"
-                    supplier = "Individuals"
-                    if not individual_inserted:
-                        yield "<customer name=%s/>\n" % quoteattr(name)
-                        individual_inserted = True
-                else:
-                    if i["parent_id"][0] in self.map_customers:
-                        name = str(self.map_customers[i["parent_id"][0]])
-                        supplier = "%s (%s)" % (
-                            (i["parent_id"][1])[:280],
-                            i["parent_id"][0],
-                        )
-                    else:
-                        continue
-
-                self.map_customers[i["id"]] = name
-                self.map_suppliers[i["id"]] = supplier
+            self.map_customers[i["id"]] = name
+            self.map_suppliers[i["id"]] = supplier
 
         if not first:
             yield "</customers>\n"
