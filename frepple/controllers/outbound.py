@@ -1150,6 +1150,35 @@ class exporter(object):
         supplierinfo.sequence -> itemsupplier.priority
         """
 
+        # A first loop to get the archived items with a demand history
+        offset = 0
+        page_size = 20000
+        self.archived_product_ids = set()
+
+        while True:
+            chunk = self.generator.getData(
+                "sale.order.line",
+                search=[
+                    "&",
+                    "&",
+                    "&",
+                    ("product_id", "!=", False),
+                    ("order_id.state", "not in", ("draft", "sent", "cancel")),
+                    ("product_id.active", "=", False),
+                    ("product_id.default_code", "!=", False),
+                ],
+                fields=[
+                    "product_id",
+                ],
+                offset=offset,
+                limit=page_size,
+            )
+            if not chunk:
+                break
+            for i in chunk:
+                self.archived_product_ids.add(i["product_id"][0])
+            offset += page_size
+
         # Read the product templates
         self.product_product = {}
         self.product_template_product = {}
@@ -1240,12 +1269,18 @@ class exporter(object):
                 "volume",
                 "weight",
                 "product_template_attribute_value_ids",
+                "active",
                 # "price_extra",
             ],
             search=[
+                "&",
                 ("default_code", "!=", False),
+                ("active", "in", [False, True]),
             ],
         ):
+            # not interested in this one as it doesn't have a demand history
+            if not i["active"] and i["id"] not in self.archived_product_ids:
+                continue
             if first:
                 yield "<!-- products -->\n"
                 yield "<items>\n"
@@ -1335,8 +1370,11 @@ class exporter(object):
                     )
                 )
 
-            # Export suppliers for the item, if the item is allowed to be purchased
-            if tmpl["purchase_ok"]:
+            archived = 1 if i["archived"] else 0
+            yield '<booleanproperty name="archived" value="%s"/>\n' % archived
+
+            # Export suppliers for the item, if the item is allowed to be purchased and is not archived
+            if tmpl["purchase_ok"] and i["active"]:
                 suppliers = {}
                 for sup in itemsuppliers.get(tmpl["id"], []):
                     name = self.map_suppliers.get(sup["partner_id"][0], None)
@@ -1492,8 +1530,18 @@ class exporter(object):
                 "days_to_prepare_mo",
                 "sequence",
                 "code",
+                "active",
             ],
+            search=[("active", "in", [True, False])],
         ):
+
+            if (
+                not i["active"]
+                and i["product_id"]
+                and i["product_id"][0] not in self.archived_product_ids
+            ):
+                continue
+
             # Determine the location
             location = self.mfg_location
 
