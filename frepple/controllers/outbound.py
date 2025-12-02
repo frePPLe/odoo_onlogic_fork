@@ -1370,7 +1370,7 @@ class exporter(object):
                     )
                 )
 
-            archived = 1 if i["archived"] else 0
+            archived = 1 if i["active"] else 0
             yield '<booleanproperty name="archived" value="%s"/>\n' % archived
 
             # Export suppliers for the item, if the item is allowed to be purchased and is not archived
