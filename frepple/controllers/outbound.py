@@ -1248,6 +1248,7 @@ class exporter(object):
                 "product.supplierinfo",
                 fields=supplierinfo_fields,
                 search=[("product_tmpl_id", "!=", False)],
+                order="sequence",
             )
 
         itemsuppliers = {}
@@ -1376,7 +1377,9 @@ class exporter(object):
             # Export suppliers for the item, if the item is allowed to be purchased and is not archived
             if tmpl["purchase_ok"] and i["active"]:
                 suppliers = {}
+                sequence = 0
                 for sup in itemsuppliers.get(tmpl["id"], []):
+                    sequence += 1
                     name = self.map_suppliers.get(sup["partner_id"][0], None)
                     if not name:
                         # Skip uninterested suppliers (eg archived ones)
@@ -1388,7 +1391,7 @@ class exporter(object):
                             {
                                 "name": name,
                                 "delay": sup["delay"],
-                                "priority": sup["sequence"] or 1,
+                                "priority": sequence,
                                 "size_minimum": sup["min_qty"],
                             }
                         )
@@ -1401,10 +1404,6 @@ class exporter(object):
                             not r["delay"] or sup["delay"] < r["delay"]
                         ):
                             r["delay"] = sup["delay"]
-                        if sup["sequence"] and (
-                            not r["sequence"] or sup["sequence"] < r["sequence"]
-                        ):
-                            r["sequence"] = sup["sequence"]
                         if sup["batching_window"] and (
                             not r["batching_window"]
                             or sup["batching_window"] > r["batching_window"]
@@ -1425,7 +1424,7 @@ class exporter(object):
                     else:
                         suppliers[(name, sup["date_start"])] = {
                             "delay": sup["delay"],
-                            "sequence": sup["sequence"] or 1,
+                            "sequence": sequence,
                             "batching_window": sup["batching_window"] or 0,
                             "min_qty": sup["min_qty"],
                             "price": max(0, sup["price"]),
