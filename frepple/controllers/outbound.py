@@ -1073,6 +1073,7 @@ class exporter(object):
             )
         if not first:
             yield "</resources>\n"
+        del self.resources_with_specific_calendars
 
     def export_reporting_hierarchy(self):
         self.reporting_categories = {}
@@ -1181,7 +1182,6 @@ class exporter(object):
 
         # Read the product templates
         self.product_product = {}
-        self.product_template_product = {}
         self.product_templates = {}
         self.routes = {
             i["id"]: i for i in self.generator.getData("stock.route", fields=["name"])
@@ -1313,7 +1313,6 @@ class exporter(object):
                 "code": i["code"],
             }
             self.product_product[i["id"]] = prod_obj
-            self.product_template_product[i["product_tmpl_id"][0]] = prod_obj
 
             # For make-to-order items the next line needs to XML snippet ' type="item_mto"'.
             yield '<item name=%s %s uom=%s volume="%f" weight="%f" cost="%f" subcategory="%s,%s"%s%s>%s\n' % (
@@ -1457,6 +1456,7 @@ class exporter(object):
             yield "</item>\n"
         if not first:
             yield "</items>\n"
+        del self.reporting_categories
 
     def export_boms(self):
         """
@@ -1999,6 +1999,8 @@ class exporter(object):
                         yield "</suboperations>\n"
                     yield "</operation>\n"
         yield "</operations>\n"
+        # We don't need the archived products anymore
+        del self.archived_product_ids
 
     def export_blanketorders(self):
         """
@@ -2651,14 +2653,7 @@ class exporter(object):
                 continue
 
             # Get MTO link
-            mto_so = (
-                i.procurement_group_id.mrp_production_ids.move_dest_ids.group_id.sale_id
-            )
-            if mto_so:
-                batch = mto_so[0].name
-            else:
-                mto_mo = i._get_sources()
-                batch = mto_mo[0].display_name if mto_mo else i.name
+            batch = i.origin if i.origin else i.name
 
             # Create a record for the MO
             yield '<operationplan type="MO" reference=%s batch=%s %s="%s" quantity="%s" status="%s">\n' % (
