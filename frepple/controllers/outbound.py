@@ -22,6 +22,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 
+import gc
 import json
 import logging
 import pytz
@@ -865,90 +866,65 @@ class exporter(object):
                 )
 
     def export_customers(self):
-        """
-        Generate a list of customers to frePPLe, based on the res.partner model.
-        We filter on res.partner where customer = True.
-
-        Mapping:
-        res.partner.id res.partner.name -> customer.name
-        """
-        self.map_customers = {}
-        # We also build in the loop the supplier map
         self.map_suppliers = {}
-        first = True
-        individual_inserted = False
+        page_size = 10000
         offset = 0
-        pagesize = 10000
-        children = {}
-        roots = []
+
+        # Process root partners first (no parent)
         while True:
-            logger.debug(
-                f"retrieving customer records from {offset} to {offset+pagesize}"
-            )
-            recs = self.generator.getData(
+            logger.debug(f"Processing customer records {offset} to {offset+page_size}")
+
+            chunk = self.generator.getData(
                 "res.partner",
-                fields=["name", "parent_id", "is_company"],
-                order="parent_id desc, id asc",
+                fields=["id", "name", "parent_id", "is_company"],
+                search=[("parent_id", "=", False)],  # Roots only first
+                order="id asc",
                 offset=offset,
-                limit=pagesize,
+                limit=page_size,
             )
-            if len(recs) == 0:
+
+            if not chunk:
                 break
-            offset += pagesize
-            for i in recs:
-                if i["parent_id"]:
-                    children.setdefault(i["parent_id"][0], []).append(i)
-                else:
-                    roots.append(i)
 
-        ordered = []
-
-        def visit(node):
-            ordered.append(node)
-            for child in children.get(node["id"], []):
-                visit(child)
-
-        for root in roots:
-            visit(root)
-
-        for i in ordered:
-
-            # We don't kow that parent (archived ?) so continue
-            if i["parent_id"] and i["parent_id"][0] not in self.map_customers:
-                continue
-
-            if first:
-                yield "<!-- customers -->\n"
-                yield "<customers>\n"
-                first = False
-            if i["is_company"]:
-                name = str(i["id"])
-                supplier = "%s (%s)" % (i["name"], i["id"])
-                yield '<customer name="%s" description=%s/>\n' % (
-                    name,
-                    quoteattr(i["name"]),
+            for i in chunk:
+                self.map_suppliers[i["id"]] = (
+                    "%s (%s)" % (i["name"], i["id"])
+                    if i["is_company"]
+                    else "Individuals"
                 )
-            elif i["parent_id"] == False or i["id"] == i["parent_id"][0]:
-                name = "Individuals"
-                supplier = "Individuals"
-                if not individual_inserted:
-                    yield "<customer name=%s/>\n" % quoteattr(name)
-                    individual_inserted = True
-            else:
-                if i["parent_id"][0] in self.map_customers:
-                    name = str(self.map_customers[i["parent_id"][0]])
-                    supplier = "%s (%s)" % (
-                        (i["parent_id"][1]),
+
+            offset += page_size
+            # Force cleanup every 50k records
+            if offset % 50000 == 0:
+                gc.collect()
+
+        # Now process children in batches
+        offset = 0
+        while True:
+            chunk = self.generator.getData(
+                "res.partner",
+                fields=["id", "name", "parent_id", "is_company"],
+                search=[("parent_id", "!=", False)],
+                order="parent_id, id asc",
+                offset=offset,
+                limit=page_size,
+            )
+
+            if not chunk:
+                break
+
+            for i in chunk:
+                if i["parent_id"] and i["parent_id"][0] in self.map_suppliers:
+                    self.map_suppliers[i["id"]] = "%s (%s)" % (
+                        i["parent_id"][1],
                         i["parent_id"][0],
                     )
-                else:
-                    continue
 
-            self.map_customers[i["id"]] = name
-            self.map_suppliers[i["id"]] = supplier
+            offset += page_size
+            if offset % 50000 == 0:
+                gc.collect()
 
-        if not first:
-            yield "</customers>\n"
+        logger.info(f"Exported {len(self.map_suppliers)} customers")
 
     def export_suppliers(self):
         """
@@ -2018,7 +1994,7 @@ class exporter(object):
             fields=["product_id", "remaining_qty", "date_schedule"],
             object=True,
         ):
-            customer = self.map_customers.get(i.order_id.partner_id.id)
+            customer = "All customers"
             product = self.product_product.get(i.product_id.id, None)
             if not customer or not product:
                 continue
@@ -2177,11 +2153,7 @@ class exporter(object):
                 if j["warehouse_id"]
                 else None
             )
-            customer = (
-                self.map_customers.get(j["partner_id"][0], None)
-                if j["partner_id"]
-                else None
-            )
+            customer = "All customers"
 
             if not customer or not location or not product:
                 # Not interested in this sales order...
