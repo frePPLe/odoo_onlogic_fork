@@ -1433,6 +1433,7 @@ class exporter(object):
         if not first:
             yield "</items>\n"
         del self.reporting_categories
+        gc.collect()
 
     def export_boms(self):
         """
