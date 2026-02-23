@@ -11,6 +11,4 @@ RUN echo "limit_time_cpu = 600" >> /etc/odoo/odoo.conf && \
 
 USER odoo
 
-COPY autologin /mnt/extra-addons/autologin
 COPY frepple /mnt/extra-addons/frepple
-COPY freppledata /mnt/extra-addons/freppledata
