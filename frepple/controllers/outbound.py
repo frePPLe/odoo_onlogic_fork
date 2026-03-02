@@ -1172,6 +1172,11 @@ class exporter(object):
             search=[("type", "not in", ("service", "consu"))],
             fields=[
                 "sale_ok",
+                "sale_ok_confirm",
+                "allow_backorder",
+                "x_is_consigned",
+                "operations_category_id",
+                "detailed_type",
                 "purchase_ok",
                 "list_price",
                 "standard_price",
@@ -1182,6 +1187,7 @@ class exporter(object):
                 "route_ids",
                 "default_code",
                 "product_state_id",
+                "is_phantom_kit",
             ]
             + (
                 [
@@ -1247,6 +1253,7 @@ class exporter(object):
                 "weight",
                 "product_template_attribute_value_ids",
                 "active",
+                "state",
                 # "price_extra",
             ],
             search=[
@@ -1337,6 +1344,36 @@ class exporter(object):
             if tmpl["product_state_id"]:
                 yield '<stringproperty name="state" value=%s/>' % (
                     quoteattr(tmpl["product_state_id"][1])
+                )
+
+            yield '<booleanproperty name="purchase_ok" value="%s"/>\n' % (
+                1 if tmpl["purchase_ok"] else 0,
+            )
+
+            yield '<booleanproperty name="sale_ok_confirm" value="%s"/>\n' % (
+                1 if tmpl["sale_ok_confirm"] else 0,
+            )
+
+            yield '<booleanproperty name="is_phantom_kit" value="%s"/>\n' % (
+                1 if tmpl["is_phantom_kit"] else 0,
+            )
+
+            yield '<booleanproperty name="allow_backorder" value="%s"/>\n' % (
+                1 if tmpl["allow_backorder"] else 0,
+            )
+
+            yield '<booleanproperty name="x_is_consigned" value="%s"/>\n' % (
+                1 if tmpl["x_is_consigned"] else 0,
+            )
+
+            if tmpl["detailed_type"]:
+                yield '<stringproperty name="detailed_type" value=%s/>' % (
+                    quoteattr(tmpl["detailed_type"])
+                )
+
+            if tmpl["operations_category_id"]:
+                yield '<stringproperty name="operations_category_id" value=%s/>' % (
+                    quoteattr(tmpl["operations_category_id"][1])
                 )
 
             if tmpl["reporting_system_id"]:
