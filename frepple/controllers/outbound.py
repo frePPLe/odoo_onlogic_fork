@@ -2085,9 +2085,9 @@ class exporter(object):
             if offset % 50000 == 0:
                 gc.collect()
             yield "</operations>\n"
-            # We don't need the archived products anymore
-            del self.archived_product_ids
-            gc.collect()
+        # We don't need the archived products anymore
+        del self.archived_product_ids
+        gc.collect()
 
     def export_blanketorders(self):
         """
