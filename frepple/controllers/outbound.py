@@ -1555,315 +1555,120 @@ class exporter(object):
         }
 
         # Loop over all bom records
-        page_size = 10000
-        offset = 0
-        while True:
-            chunk = self.generator.getData(
-                "mrp.bom",
-                fields=[
-                    "product_qty",
-                    "product_uom_id",
-                    "product_tmpl_id",
-                    "product_id",
-                    "type",
-                    "bom_line_ids",
-                    "produce_delay",
-                    "days_to_prepare_mo",
-                    "sequence",
-                    "code",
-                    "active",
-                ],
-                search=[("active", "in", [True, False])],
-                offset=offset,
-                limit=page_size,
+        for i in self.generator.getData(
+            "mrp.bom",
+            fields=[
+                "product_qty",
+                "product_uom_id",
+                "product_tmpl_id",
+                "product_id",
+                "type",
+                "bom_line_ids",
+                "produce_delay",
+                "days_to_prepare_mo",
+                "sequence",
+                "code",
+                "active",
+            ],
+            search=[("active", "in", [True, False])],
+        ):
+
+            if (
+                not i["active"]
+                and i["product_id"]
+                and i["product_id"][0] not in self.archived_product_ids
+            ):
+                continue
+
+            # Determine the location
+            location = self.mfg_location
+
+            product_template = self.product_templates.get(i["product_tmpl_id"][0], None)
+            if not product_template:
+                continue
+            uom_factor = self.convert_qty_uom(
+                1.0, i["product_uom_id"], i["product_tmpl_id"][0]
             )
 
-            if not chunk:
-                break
+            # Loop over all subcontractors
+            if i["type"] == "subcontract":
+                subcontractors = self.product_templates[i["product_tmpl_id"][0]].get(
+                    "subcontractors", None
+                )
+                if not subcontractors:
+                    continue
+            else:
+                subcontractors = [{}]
 
-            for i in chunk:
-                if (
-                    not i["active"]
-                    and i["product_id"]
-                    and i["product_id"][0] not in self.archived_product_ids
-                ):
+            for product_id in product_template["product_variant_ids"]:
+                # In the case of variants, the BOM needs to apply to the correct product
+                if i["product_id"] and not (i["product_id"][0] == product_id):
                     continue
 
-                # Determine the location
-                location = self.mfg_location
-
-                product_template = self.product_templates.get(
-                    i["product_tmpl_id"][0], None
-                )
-                if not product_template:
+                # Determine operation name and item
+                product_buf = self.product_product.get(product_id, None)
+                if not product_buf:
+                    logger.warning("Skipping %s" % i["product_tmpl_id"][0])
                     continue
-                uom_factor = self.convert_qty_uom(
-                    1.0, i["product_uom_id"], i["product_tmpl_id"][0]
-                )
 
-                # Loop over all subcontractors
-                if i["type"] == "subcontract":
-                    subcontractors = self.product_templates[
-                        i["product_tmpl_id"][0]
-                    ].get("subcontractors", None)
-                    if not subcontractors:
-                        continue
-                else:
-                    subcontractors = [{}]
-
-                for product_id in product_template["product_variant_ids"]:
-                    # In the case of variants, the BOM needs to apply to the correct product
-                    if i["product_id"] and not (i["product_id"][0] == product_id):
-                        continue
-
-                    # Determine operation name and item
-                    product_buf = self.product_product.get(product_id, None)
-                    if not product_buf:
-                        logger.warning("Skipping %s" % i["product_tmpl_id"][0])
-                        continue
-
-                    for subcontractor in subcontractors:
-                        # Build operation. The operation can either be a summary operation or a detailed
-                        # routing.
-                        operation = "%s @ %s %d" % (
-                            product_buf["code"] or product_buf["name"],
+                for subcontractor in subcontractors:
+                    # Build operation. The operation can either be a summary operation or a detailed
+                    # routing.
+                    operation = "%s @ %s %d" % (
+                        product_buf["code"] or product_buf["name"],
+                        subcontractor.get("name", location),
+                        i["id"],
+                    )
+                    if len(operation) > 300:
+                        suffix = " @ %s %d" % (
                             subcontractor.get("name", location),
                             i["id"],
                         )
-                        if len(operation) > 300:
-                            suffix = " @ %s %d" % (
-                                subcontractor.get("name", location),
-                                i["id"],
-                            )
-                            operation = "%s%s" % (
-                                product_buf["name"][: 300 - len(suffix)],
-                                suffix,
-                            )
-                        if (
-                            not self.manage_work_orders
-                            or subcontractor
-                            or not mrp_routing_workcenters.get(i["id"], [])
-                        ):
-                            #
-                            # CASE 1: A single operation used for the BOM
-                            # All routing steps are collapsed in a single operation.
-                            #
-                            if subcontractor:
-                                yield '<operation name=%s %ssize_multiple="1" category="subcontractor" subcategory=%s duration="P%dD" posttime="P%dD" xsi:type="operation_fixed_time" priority="%s" size_minimum="%s">\n' "<item name=%s/><location name=%s/>\n" % (
-                                    quoteattr(operation),
-                                    (
-                                        ("description=%s " % quoteattr(i["code"]))
-                                        if i["code"]
-                                        else ""
-                                    ),
-                                    quoteattr(subcontractor["name"]),
-                                    subcontractor.get("delay", 0),
-                                    self.po_lead,
-                                    subcontractor.get("priority", 1) + 50,
-                                    subcontractor.get("size_minimum", 0),
-                                    quoteattr(product_buf["name"]),
-                                    quoteattr(location),
-                                )
-                            else:
-                                duration = (i["produce_delay"] or 0) + (
-                                    i["days_to_prepare_mo"] or 0
-                                )
-
-                                yield '<operation name=%s %ssize_multiple="1" duration="%s" posttime="P%dD" priority="%s" xsi:type="operation_fixed_time">\n' "<item name=%s/><location name=%s/>\n" % (
-                                    quoteattr(operation),
-                                    (
-                                        ("description=%s " % quoteattr(i["code"]))
-                                        if i["code"]
-                                        else ""
-                                    ),
-                                    (
-                                        self.convert_float_time(duration)
-                                        if duration and duration > 0
-                                        else "P0D"
-                                    ),
-                                    self.manufacturing_lead,
-                                    100 + (i["sequence"] or 1),
-                                    quoteattr(product_buf["name"]),
-                                    quoteattr(location),
-                                )
-
-                            # Handle produced quantity of a bom
-                            producedQty = self.convert_qty_uom(
-                                i["product_qty"],
-                                i["product_uom_id"],
-                                i["product_tmpl_id"][0],
-                            )
-                            if not producedQty:
-                                producedQty = 1
-                            if producedQty != 1 and not subcontractor:
-                                yield "<size_minimum>%s</size_minimum>\n" % producedQty
-                            yield "<flows>\n"
-
-                            # Build consuming flows.
-                            # If the same component is consumed multiple times in the same BOM
-                            # we sum up all quantities in a single flow. We assume all of them
-                            # have the same effectivity.
-                            fl = {}
-                            for j in self.generator.getData(
-                                "mrp.bom.line",
-                                ids=i["bom_line_ids"],
-                                fields=[
-                                    "product_qty",
-                                    "product_uom_id",
-                                    "product_id",
-                                    "operation_id",
-                                    "bom_product_template_attribute_value_ids",
-                                ],
-                            ):
-                                # check if this BOM line applies to this variant
-                                if len(
-                                    j["bom_product_template_attribute_value_ids"]
-                                ) > 0 and not all(
-                                    elem
-                                    in j["bom_product_template_attribute_value_ids"]
-                                    for elem in product_buf[
-                                        "product_template_attribute_value_ids"
-                                    ]
-                                ):
-                                    continue
-                                product = self.product_product.get(
-                                    j["product_id"][0], None
-                                )
-                                if not product:
-                                    continue
-                                if j["product_id"][0] in fl:
-                                    fl[j["product_id"][0]].append(j)
-                                else:
-                                    fl[j["product_id"][0]] = [j]
-                            for j in fl:
-                                product = self.product_product[j]
-                                qty = sum(
-                                    self.convert_qty_uom(
-                                        k["product_qty"],
-                                        k["product_uom_id"],
-                                        self.product_product[k["product_id"][0]][
-                                            "template"
-                                        ],
-                                    )
-                                    for k in fl[j]
-                                )
-                                if qty > 0:
-                                    yield '<flow xsi:type="flow_start" quantity="-%f"><item name=%s/></flow>\n' % (
-                                        qty / producedQty,
-                                        quoteattr(product["name"]),
-                                    )
-
-                            # Build byproduct flows
-                            if i.get("sub_products", None):
-                                for j in self.generator.getData(
-                                    "mrp.subproduct",
-                                    ids=i["sub_products"],
-                                    fields=[
-                                        "product_id",
-                                        "product_qty",
-                                        "product_uom",
-                                        "subproduct_type",
-                                    ],
-                                ):
-                                    product = self.product_product.get(
-                                        j["product_id"][0], None
-                                    )
-                                    if not product:
-                                        continue
-                                    yield '<flow xsi:type="%s" quantity="%f"><item name=%s/></flow>\n' % (
-                                        (
-                                            "flow_fixed_end"
-                                            if j["subproduct_type"] == "fixed"
-                                            else "flow_end"
-                                        ),
-                                        self.convert_qty_uom(
-                                            j["product_qty"],
-                                            j["product_uom"],
-                                            j["product_id"][0],
-                                        )
-                                        / producedQty,
-                                        quoteattr(product["name"]),
-                                    )
-                            yield "</flows>\n"
-
-                            # Create loads
-                            if i["id"] and not subcontractor:
-                                exists = False
-                                for j in mrp_routing_workcenters.get(i["id"], []):
-                                    if (
-                                        not j["workcenter_id"]
-                                        or j["workcenter_id"][0]
-                                        not in self.map_workcenters
-                                    ):
-                                        continue
-                                    if not exists:
-                                        exists = True
-                                        yield "<loads>\n"
-                                    yield '<load quantity="%f" search=%s><resource name=%s/>%s</load>\n' % (
-                                        j["time_cycle"],
-                                        quoteattr(j["search_mode"]),
-                                        quoteattr(
-                                            self.map_workcenters[j["workcenter_id"][0]]
-                                        ),
-                                        (
-                                            (
-                                                "<skill name=%s/>"
-                                                % quoteattr(j["skill"][1])
-                                            )
-                                            if j["skill"]
-                                            else ""
-                                        ),
-                                    )
-                                    # create a load for secondary workcenters
-                                    # prepare the secondary workcenter xml string upfront
-                                    secondary_workcenter_str = ""
-                                    for sw_id in j["secondary_workcenter"]:
-                                        secondary_workcenter = mrp_secondary_workcenter[
-                                            sw_id
-                                        ]
-                                        yield '<load quantity="%f" search=%s><resource name=%s/>%s</load>' % (
-                                            (
-                                                1
-                                                if not secondary_workcenter["duration"]
-                                                or j["time_cycle"] == 0
-                                                else secondary_workcenter["duration"]
-                                                / j["time_cycle"]
-                                            ),
-                                            quoteattr(
-                                                secondary_workcenter["search_mode"]
-                                            ),
-                                            quoteattr(
-                                                self.map_workcenters[
-                                                    secondary_workcenter[
-                                                        "workcenter_id"
-                                                    ][0]
-                                                ]
-                                            ),
-                                            (
-                                                (
-                                                    "<skill name=%s/>"
-                                                    % quoteattr(
-                                                        secondary_workcenter["skill"][1]
-                                                    )
-                                                )
-                                                if secondary_workcenter["skill"]
-                                                else ""
-                                            ),
-                                        )
-
-                                if exists:
-                                    yield "</loads>\n"
-                        else:
-                            #
-                            # CASE 2: A routing operation is created with a suboperation for each
-                            # routing step.
-                            #
-                            yield '<operation name=%s %ssize_multiple="1" posttime="P%dD" priority="%s" xsi:type="operation_routing"><item name=%s/><location name=%s/>\n' % (
+                        operation = "%s%s" % (
+                            product_buf["name"][: 300 - len(suffix)],
+                            suffix,
+                        )
+                    if (
+                        not self.manage_work_orders
+                        or subcontractor
+                        or not mrp_routing_workcenters.get(i["id"], [])
+                    ):
+                        #
+                        # CASE 1: A single operation used for the BOM
+                        # All routing steps are collapsed in a single operation.
+                        #
+                        if subcontractor:
+                            yield '<operation name=%s %ssize_multiple="1" category="subcontractor" subcategory=%s duration="P%dD" posttime="P%dD" xsi:type="operation_fixed_time" priority="%s" size_minimum="%s">\n' "<item name=%s/><location name=%s/>\n" % (
                                 quoteattr(operation),
                                 (
                                     ("description=%s " % quoteattr(i["code"]))
                                     if i["code"]
                                     else ""
+                                ),
+                                quoteattr(subcontractor["name"]),
+                                subcontractor.get("delay", 0),
+                                self.po_lead,
+                                subcontractor.get("priority", 1) + 50,
+                                subcontractor.get("size_minimum", 0),
+                                quoteattr(product_buf["name"]),
+                                quoteattr(location),
+                            )
+                        else:
+                            duration = (i["produce_delay"] or 0) + (
+                                i["days_to_prepare_mo"] or 0
+                            )
+
+                            yield '<operation name=%s %ssize_multiple="1" duration="%s" posttime="P%dD" priority="%s" xsi:type="operation_fixed_time">\n' "<item name=%s/><location name=%s/>\n" % (
+                                quoteattr(operation),
+                                (
+                                    ("description=%s " % quoteattr(i["code"]))
+                                    if i["code"]
+                                    else ""
+                                ),
+                                (
+                                    self.convert_float_time(duration)
+                                    if duration and duration > 0
+                                    else "P0D"
                                 ),
                                 self.manufacturing_lead,
                                 100 + (i["sequence"] or 1),
@@ -1871,220 +1676,368 @@ class exporter(object):
                                 quoteattr(location),
                             )
 
-                            # Handle produced quantity of a bom
-                            producedQty = (
-                                i["product_qty"]
-                                * getattr(i, "product_efficiency", 1.0)
-                                * uom_factor
+                        # Handle produced quantity of a bom
+                        producedQty = self.convert_qty_uom(
+                            i["product_qty"],
+                            i["product_uom_id"],
+                            i["product_tmpl_id"][0],
+                        )
+                        if not producedQty:
+                            producedQty = 1
+                        if producedQty != 1 and not subcontractor:
+                            yield "<size_minimum>%s</size_minimum>\n" % producedQty
+                        yield "<flows>\n"
+
+                        # Build consuming flows.
+                        # If the same component is consumed multiple times in the same BOM
+                        # we sum up all quantities in a single flow. We assume all of them
+                        # have the same effectivity.
+                        fl = {}
+                        for j in self.generator.getData(
+                            "mrp.bom.line",
+                            ids=i["bom_line_ids"],
+                            fields=[
+                                "product_qty",
+                                "product_uom_id",
+                                "product_id",
+                                "operation_id",
+                                "bom_product_template_attribute_value_ids",
+                            ],
+                        ):
+                            # check if this BOM line applies to this variant
+                            if len(
+                                j["bom_product_template_attribute_value_ids"]
+                            ) > 0 and not all(
+                                elem in j["bom_product_template_attribute_value_ids"]
+                                for elem in product_buf[
+                                    "product_template_attribute_value_ids"
+                                ]
+                            ):
+                                continue
+                            product = self.product_product.get(j["product_id"][0], None)
+                            if not product:
+                                continue
+                            if j["product_id"][0] in fl:
+                                fl[j["product_id"][0]].append(j)
+                            else:
+                                fl[j["product_id"][0]] = [j]
+                        for j in fl:
+                            product = self.product_product[j]
+                            qty = sum(
+                                self.convert_qty_uom(
+                                    k["product_qty"],
+                                    k["product_uom_id"],
+                                    self.product_product[k["product_id"][0]][
+                                        "template"
+                                    ],
+                                )
+                                for k in fl[j]
                             )
-                            if not producedQty:
-                                producedQty = 1
-                            if producedQty != 1:
-                                yield "<size_minimum>%s</size_minimum>\n" % producedQty
+                            if qty > 0:
+                                yield '<flow xsi:type="flow_start" quantity="-%f"><item name=%s/></flow>\n' % (
+                                    qty / producedQty,
+                                    quoteattr(product["name"]),
+                                )
 
-                            yield "<suboperations>"
-
-                            fl = {}
+                        # Build byproduct flows
+                        if i.get("sub_products", None):
                             for j in self.generator.getData(
-                                "mrp.bom.line",
-                                ids=i["bom_line_ids"],
+                                "mrp.subproduct",
+                                ids=i["sub_products"],
                                 fields=[
-                                    "product_qty",
-                                    "product_uom_id",
                                     "product_id",
-                                    "operation_id",
-                                    "bom_product_template_attribute_value_ids",
+                                    "product_qty",
+                                    "product_uom",
+                                    "subproduct_type",
                                 ],
                             ):
-                                # check if this BOM line applies to this variant
-                                if len(
-                                    j["bom_product_template_attribute_value_ids"]
-                                ) > 0 and not all(
-                                    elem
-                                    in product_buf[
-                                        "product_template_attribute_value_ids"
-                                    ]
-                                    for elem in j[
-                                        "bom_product_template_attribute_value_ids"
-                                    ]
-                                ):
-                                    continue
                                 product = self.product_product.get(
                                     j["product_id"][0], None
                                 )
                                 if not product:
                                     continue
-                                qty = self.convert_qty_uom(
-                                    j["product_qty"],
-                                    j["product_uom_id"],
-                                    self.product_product[j["product_id"][0]][
-                                        "template"
-                                    ],
+                                yield '<flow xsi:type="%s" quantity="%f"><item name=%s/></flow>\n' % (
+                                    (
+                                        "flow_fixed_end"
+                                        if j["subproduct_type"] == "fixed"
+                                        else "flow_end"
+                                    ),
+                                    self.convert_qty_uom(
+                                        j["product_qty"],
+                                        j["product_uom"],
+                                        j["product_id"][0],
+                                    )
+                                    / producedQty,
+                                    quoteattr(product["name"]),
                                 )
-                                if (
-                                    j["product_id"][0],
-                                    j["operation_id"][0] if j["operation_id"] else None,
-                                ) in fl:
-                                    # If the same component is consumed multiple times in the same BOM step
-                                    # we sum up all quantities in a single flow. We assume all of them
-                                    # have the same effectivity.
-                                    fl[
-                                        (
-                                            j["product_id"][0],
-                                            (
-                                                j["operation_id"][0]
-                                                if j["operation_id"]
-                                                else None
-                                            ),
-                                        )
-                                    ]["qty"] += qty
-                                else:
-                                    j["qty"] = qty
-                                    fl[
-                                        (
-                                            j["product_id"][0],
-                                            (
-                                                j["operation_id"][0]
-                                                if j["operation_id"]
-                                                else None
-                                            ),
-                                        )
-                                    ] = j
+                        yield "</flows>\n"
 
-                            steplist = mrp_routing_workcenters[i["id"]]
-                            counter = 0
-                            for step in steplist:
-                                counter = counter + 1
-                                suboperation = step["name"]
-                                name = "%s - %s - %s" % (
-                                    operation,
-                                    suboperation,
-                                    step["id"],
-                                )
-                                if len(name) > 300:
-                                    suffix = " - %s - %s" % (
-                                        suboperation,
-                                        step["id"],
-                                    )
-                                    name = "%s%s" % (
-                                        operation[: 300 - len(suffix)],
-                                        suffix,
-                                    )
+                        # Create loads
+                        if i["id"] and not subcontractor:
+                            exists = False
+                            for j in mrp_routing_workcenters.get(i["id"], []):
                                 if (
-                                    not step["workcenter_id"]
-                                    or step["workcenter_id"][0]
-                                    not in self.map_workcenters
+                                    not j["workcenter_id"]
+                                    or j["workcenter_id"][0] not in self.map_workcenters
                                 ):
                                     continue
-
+                                if not exists:
+                                    exists = True
+                                    yield "<loads>\n"
+                                yield '<load quantity="%f" search=%s><resource name=%s/>%s</load>\n' % (
+                                    j["time_cycle"],
+                                    quoteattr(j["search_mode"]),
+                                    quoteattr(
+                                        self.map_workcenters[j["workcenter_id"][0]]
+                                    ),
+                                    (
+                                        ("<skill name=%s/>" % quoteattr(j["skill"][1]))
+                                        if j["skill"]
+                                        else ""
+                                    ),
+                                )
+                                # create a load for secondary workcenters
                                 # prepare the secondary workcenter xml string upfront
                                 secondary_workcenter_str = ""
-                                for sw_id in step["secondary_workcenter"]:
+                                for sw_id in j["secondary_workcenter"]:
                                     secondary_workcenter = mrp_secondary_workcenter[
                                         sw_id
                                     ]
-                                    if (
-                                        secondary_workcenter["workcenter_id"][0]
-                                        not in self.map_workcenters
-                                    ):
-                                        continue
-                                    secondary_workcenter_str += (
-                                        '<load quantity="%f" search=%s><resource name=%s/>%s</load>'
-                                        % (
+                                    yield '<load quantity="%f" search=%s><resource name=%s/>%s</load>' % (
+                                        (
+                                            1
+                                            if not secondary_workcenter["duration"]
+                                            or j["time_cycle"] == 0
+                                            else secondary_workcenter["duration"]
+                                            / j["time_cycle"]
+                                        ),
+                                        quoteattr(secondary_workcenter["search_mode"]),
+                                        quoteattr(
+                                            self.map_workcenters[
+                                                secondary_workcenter["workcenter_id"][0]
+                                            ]
+                                        ),
+                                        (
                                             (
-                                                1
-                                                if not secondary_workcenter["duration"]
-                                                or step["time_cycle"] == 0
-                                                else secondary_workcenter["duration"]
-                                                / step["time_cycle"]
-                                            ),
-                                            quoteattr(
-                                                secondary_workcenter["search_mode"]
-                                            ),
-                                            quoteattr(
-                                                self.map_workcenters[
-                                                    secondary_workcenter[
-                                                        "workcenter_id"
-                                                    ][0]
-                                                ]
-                                            ),
-                                            (
-                                                (
-                                                    "<skill name=%s/>"
-                                                    % quoteattr(
-                                                        secondary_workcenter["skill"][1]
-                                                    )
+                                                "<skill name=%s/>"
+                                                % quoteattr(
+                                                    secondary_workcenter["skill"][1]
                                                 )
-                                                if secondary_workcenter["skill"]
-                                                else ""
-                                            ),
-                                        )
+                                            )
+                                            if secondary_workcenter["skill"]
+                                            else ""
+                                        ),
                                     )
 
-                                yield "<suboperation>" '<operation name=%s %spriority="%s" duration_per="%s" xsi:type="operation_time_per">\n' "<location name=%s/>\n" '<loads><load quantity="%f" search=%s><resource name=%s/>%s</load>%s</loads>\n' % (
-                                    quoteattr(name),
+                            if exists:
+                                yield "</loads>\n"
+                    else:
+                        #
+                        # CASE 2: A routing operation is created with a suboperation for each
+                        # routing step.
+                        #
+                        yield '<operation name=%s %ssize_multiple="1" posttime="P%dD" priority="%s" xsi:type="operation_routing"><item name=%s/><location name=%s/>\n' % (
+                            quoteattr(operation),
+                            (
+                                ("description=%s " % quoteattr(i["code"]))
+                                if i["code"]
+                                else ""
+                            ),
+                            self.manufacturing_lead,
+                            100 + (i["sequence"] or 1),
+                            quoteattr(product_buf["name"]),
+                            quoteattr(location),
+                        )
+
+                        # Handle produced quantity of a bom
+                        producedQty = (
+                            i["product_qty"]
+                            * getattr(i, "product_efficiency", 1.0)
+                            * uom_factor
+                        )
+                        if not producedQty:
+                            producedQty = 1
+                        if producedQty != 1:
+                            yield "<size_minimum>%s</size_minimum>\n" % producedQty
+
+                        yield "<suboperations>"
+
+                        fl = {}
+                        for j in self.generator.getData(
+                            "mrp.bom.line",
+                            ids=i["bom_line_ids"],
+                            fields=[
+                                "product_qty",
+                                "product_uom_id",
+                                "product_id",
+                                "operation_id",
+                                "bom_product_template_attribute_value_ids",
+                            ],
+                        ):
+                            # check if this BOM line applies to this variant
+                            if len(
+                                j["bom_product_template_attribute_value_ids"]
+                            ) > 0 and not all(
+                                elem
+                                in product_buf["product_template_attribute_value_ids"]
+                                for elem in j[
+                                    "bom_product_template_attribute_value_ids"
+                                ]
+                            ):
+                                continue
+                            product = self.product_product.get(j["product_id"][0], None)
+                            if not product:
+                                continue
+                            qty = self.convert_qty_uom(
+                                j["product_qty"],
+                                j["product_uom_id"],
+                                self.product_product[j["product_id"][0]]["template"],
+                            )
+                            if (
+                                j["product_id"][0],
+                                j["operation_id"][0] if j["operation_id"] else None,
+                            ) in fl:
+                                # If the same component is consumed multiple times in the same BOM step
+                                # we sum up all quantities in a single flow. We assume all of them
+                                # have the same effectivity.
+                                fl[
                                     (
-                                        ("description=%s " % quoteattr(i["code"]))
-                                        if i["code"]
-                                        else ""
-                                    ),
-                                    counter * 10,
-                                    (
-                                        self.convert_float_time(
-                                            step["time_cycle"] / 1440.0
-                                        )
-                                        if step["time_cycle"] and step["time_cycle"] > 0
-                                        else "P0D"
-                                    ),
-                                    quoteattr(location),
-                                    1,
-                                    quoteattr(step["search_mode"]),
-                                    quoteattr(
-                                        self.map_workcenters[step["workcenter_id"][0]]
-                                    ),
-                                    (
+                                        j["product_id"][0],
                                         (
-                                            "<skill name=%s/>"
-                                            % quoteattr(step["skill"][1])
-                                        )
-                                        if step["skill"]
-                                        else ""
-                                    ),
-                                    secondary_workcenter_str,
+                                            j["operation_id"][0]
+                                            if j["operation_id"]
+                                            else None
+                                        ),
+                                    )
+                                ]["qty"] += qty
+                            else:
+                                j["qty"] = qty
+                                fl[
+                                    (
+                                        j["product_id"][0],
+                                        (
+                                            j["operation_id"][0]
+                                            if j["operation_id"]
+                                            else None
+                                        ),
+                                    )
+                                ] = j
+
+                        steplist = mrp_routing_workcenters[i["id"]]
+                        counter = 0
+                        for step in steplist:
+                            counter = counter + 1
+                            suboperation = step["name"]
+                            name = "%s - %s - %s" % (
+                                operation,
+                                suboperation,
+                                step["id"],
+                            )
+                            if len(name) > 300:
+                                suffix = " - %s - %s" % (
+                                    suboperation,
+                                    step["id"],
                                 )
-                                first_flow = True
-                                for j in fl.values():
-                                    if j["qty"] > 0 and (
+                                name = "%s%s" % (
+                                    operation[: 300 - len(suffix)],
+                                    suffix,
+                                )
+                            if (
+                                not step["workcenter_id"]
+                                or step["workcenter_id"][0] not in self.map_workcenters
+                            ):
+                                continue
+
+                            # prepare the secondary workcenter xml string upfront
+                            secondary_workcenter_str = ""
+                            for sw_id in step["secondary_workcenter"]:
+                                secondary_workcenter = mrp_secondary_workcenter[sw_id]
+                                if (
+                                    secondary_workcenter["workcenter_id"][0]
+                                    not in self.map_workcenters
+                                ):
+                                    continue
+                                secondary_workcenter_str += (
+                                    '<load quantity="%f" search=%s><resource name=%s/>%s</load>'
+                                    % (
                                         (
-                                            j["operation_id"]
-                                            and j["operation_id"][0] == step["id"]
-                                        )
-                                        or (
-                                            not j["operation_id"]
-                                            and step == steplist[0]
-                                        )
-                                    ):
-                                        if first_flow:
-                                            first_flow = False
-                                            yield "<flows>\n"
-                                        yield '<flow xsi:type="flow_start" quantity="-%f"><item name=%s/></flow>\n' % (
-                                            j["qty"] / producedQty,
-                                            quoteattr(
-                                                self.product_product[
-                                                    j["product_id"][0]
-                                                ]["name"]
-                                            ),
-                                        )
-                                if not first_flow:
-                                    yield "</flows>\n"
-                                yield "</operation></suboperation>\n"
-                            yield "</suboperations>\n"
-                        yield "</operation>\n"
-            offset += page_size
-            # Force cleanup every 50k records
-            if offset % 50000 == 0:
-                gc.collect()
-            yield "</operations>\n"
+                                            1
+                                            if not secondary_workcenter["duration"]
+                                            or step["time_cycle"] == 0
+                                            else secondary_workcenter["duration"]
+                                            / step["time_cycle"]
+                                        ),
+                                        quoteattr(secondary_workcenter["search_mode"]),
+                                        quoteattr(
+                                            self.map_workcenters[
+                                                secondary_workcenter["workcenter_id"][0]
+                                            ]
+                                        ),
+                                        (
+                                            (
+                                                "<skill name=%s/>"
+                                                % quoteattr(
+                                                    secondary_workcenter["skill"][1]
+                                                )
+                                            )
+                                            if secondary_workcenter["skill"]
+                                            else ""
+                                        ),
+                                    )
+                                )
+
+                            yield "<suboperation>" '<operation name=%s %spriority="%s" duration_per="%s" xsi:type="operation_time_per">\n' "<location name=%s/>\n" '<loads><load quantity="%f" search=%s><resource name=%s/>%s</load>%s</loads>\n' % (
+                                quoteattr(name),
+                                (
+                                    ("description=%s " % quoteattr(i["code"]))
+                                    if i["code"]
+                                    else ""
+                                ),
+                                counter * 10,
+                                (
+                                    self.convert_float_time(step["time_cycle"] / 1440.0)
+                                    if step["time_cycle"] and step["time_cycle"] > 0
+                                    else "P0D"
+                                ),
+                                quoteattr(location),
+                                1,
+                                quoteattr(step["search_mode"]),
+                                quoteattr(
+                                    self.map_workcenters[step["workcenter_id"][0]]
+                                ),
+                                (
+                                    ("<skill name=%s/>" % quoteattr(step["skill"][1]))
+                                    if step["skill"]
+                                    else ""
+                                ),
+                                secondary_workcenter_str,
+                            )
+                            first_flow = True
+                            for j in fl.values():
+                                if j["qty"] > 0 and (
+                                    (
+                                        j["operation_id"]
+                                        and j["operation_id"][0] == step["id"]
+                                    )
+                                    or (not j["operation_id"] and step == steplist[0])
+                                ):
+                                    if first_flow:
+                                        first_flow = False
+                                        yield "<flows>\n"
+                                    yield '<flow xsi:type="flow_start" quantity="-%f"><item name=%s/></flow>\n' % (
+                                        j["qty"] / producedQty,
+                                        quoteattr(
+                                            self.product_product[j["product_id"][0]][
+                                                "name"
+                                            ]
+                                        ),
+                                    )
+                            if not first_flow:
+                                yield "</flows>\n"
+                            yield "</operation></suboperation>\n"
+                        yield "</suboperations>\n"
+                    yield "</operation>\n"
+        yield "</operations>\n"
         # We don't need the archived products anymore
         del self.archived_product_ids
         gc.collect()
