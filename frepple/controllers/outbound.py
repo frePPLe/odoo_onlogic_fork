@@ -3029,6 +3029,7 @@ class exporter(object):
                     "product_uom",
                     "qty_multiple",
                 ],
+                search=[("route_id", "=", False)],
             ):
                 if first:
                     yield "<!-- order points -->\n"
@@ -3071,6 +3072,7 @@ class exporter(object):
                     "product_uom",
                     "qty_multiple",
                 ],
+                search=[("route_id", "=", False)],
             ):
                 if first:
                     yield "<!-- order points -->\n"
