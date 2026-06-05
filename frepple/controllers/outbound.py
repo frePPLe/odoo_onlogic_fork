@@ -2173,7 +2173,8 @@ class exporter(object):
                         "state",
                         "in",
                         ["waiting", "partially_available", "assigned", "confirmed"],
-                    )
+                    ),
+                    ("sale_line_id", "!=", False),
                 ],
                 fields=[
                     "id",
@@ -3140,8 +3141,7 @@ class exporter(object):
         yield "<operationplans>\n"
         if isinstance(self.generator, Odoo_generator):
             # SQL query gives much better performance
-            self.generator.env.cr.execute(
-                """
+            self.generator.env.cr.execute("""
                 SELECT stock_quant.product_id,
                 stock_quant.location_id,
                 sum(stock_quant.quantity) as quantity,
@@ -3157,8 +3157,7 @@ class exporter(object):
                 stock_lot.name,
                 stock_lot.expiration_date
                 ORDER BY location_id ASC
-                """
-            )
+                """)
             data = self.generator.env.cr.fetchall()
         else:
             data = [
