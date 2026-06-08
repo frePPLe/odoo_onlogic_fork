@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 
 class Odoo_generator:
+    pagesize = 10000
+
     def __init__(self, env):
         self.env = env
 
@@ -74,26 +76,47 @@ class Odoo_generator:
                 return self.env[model].browse(ids) if ids else []
             else:
                 return self.env[model].browse(ids).read(fields) if ids else []
-        if order:
-            if object:
-                return self.env[model].search(
-                    search, order=order, limit=limit, offset=offset
-                )
+
+        # If a limit is specified, use a single query (no pagination)
+        if limit is not None:
+            if order:
+                if object:
+                    return self.env[model].search(
+                        search, order=order, limit=limit, offset=offset
+                    )
+                else:
+                    return (
+                        self.env[model]
+                        .search(search, order=order, limit=limit, offset=offset)
+                        .read(fields)
+                    )
             else:
-                return (
-                    self.env[model]
-                    .search(search, order=order, limit=limit, offset=offset)
-                    .read(fields)
-                )
-        else:
+                if object:
+                    return self.env[model].search(search, limit=limit, offset=offset)
+                else:
+                    return (
+                        self.env[model]
+                        .search(search, limit=limit, offset=offset)
+                        .read(fields)
+                    )
+
+        # Paginate in chunks of pagesize records
+        results = [] if not object else self.env[model]
+        while True:
+            kwargs = {"limit": self.pagesize, "offset": offset}
+            if order:
+                kwargs["order"] = order
+            chunk = self.env[model].search(search, **kwargs)
+            if not chunk:
+                break
             if object:
-                return self.env[model].search(search, limit=limit, offset=offset)
+                results |= chunk
             else:
-                return (
-                    self.env[model]
-                    .search(search, limit=limit, offset=offset)
-                    .read(fields)
-                )
+                results.extend(chunk.read(fields))
+            if len(chunk) < self.pagesize:
+                break
+            offset += self.pagesize
+        return results
 
 
 class XMLRPC_generator:
