@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class Odoo_generator:
-    pagesize = 10000
+    pagesize = 999
 
     def __init__(self, env):
         self.env = env
