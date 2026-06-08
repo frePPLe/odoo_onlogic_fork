@@ -25,6 +25,8 @@
 import gc
 import json
 import logging
+import psutil
+import os
 import pytz
 import xmlrpc.client
 from xml.sax.saxutils import quoteattr
@@ -276,6 +278,14 @@ class exporter(object):
         # Which data elements belong to each mode can vary between implementations.
         self.mode = mode
 
+    def _log_memory(self, step_name):
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        logger.info(
+            "Memory after %s: RSS=%.1f MB, VMS=%.1f MB"
+            % (step_name, mem_info.rss / 1024 / 1024, mem_info.vms / 1024 / 1024)
+        )
+
     def run(self):
         # Check if we manage by work orders or manufacturing orders.
         self.manage_work_orders = False
@@ -308,6 +318,7 @@ class exporter(object):
 
         # Synchronize users
         yield from self.export_users()
+        self._log_memory("export_users")
 
         # Main content.
         # The order of the entities is important. First one needs to create the
@@ -318,31 +329,43 @@ class exporter(object):
         logger.debug("Exporting calendars.")
         if self.mode == 1:
             yield from self.export_calendar()
+            self._log_memory("export_calendar")
         logger.debug("Exporting locations.")
         yield from self.export_locations()
+        self._log_memory("export_locations")
         self.load_operation_types()
         logger.debug("Exporting customers.")
         yield from self.export_customers()
+        self._log_memory("export_customers")
         if self.mode == 1:
             logger.debug("Exporting suppliers.")
             yield from self.export_suppliers()
+            self._log_memory("export_suppliers")
             logger.debug("Exporting skills.")
             yield from self.export_skills()
+            self._log_memory("export_skills")
             logger.debug("Exporting workcenters.")
             yield from self.export_workcenters()
+            self._log_memory("export_workcenters")
             logger.debug("Exporting workcenterskills.")
             yield from self.export_workcenterskills()
+            self._log_memory("export_workcenterskills")
         logger.debug("Exporting products.")
         yield from self.export_item_hierarchy()
+        self._log_memory("export_item_hierarchy")
         self.export_reporting_hierarchy()
         yield from self.export_items()
+        self._log_memory("export_items")
         logger.debug("Exporting BOMs.")
         if self.mode == 1:
             yield from self.export_boms()
+            self._log_memory("export_boms")
         logger.debug("Exporting sales blanket orders.")
         yield from self.export_blanketorders()
+        self._log_memory("export_blanketorders")
         logger.debug("Exporting sales orders.")
         yield from self.export_salesorders()
+        self._log_memory("export_salesorders")
         # Uncomment the following lines to create forecast models in frepple
         # logger.debug("Exporting forecast.")
         # for i in self.export_forecasts():
@@ -350,17 +373,22 @@ class exporter(object):
         if self.mode == 1:
             logger.debug("Exporting purchase orders.")
             yield from self.export_purchaseorders()
+            self._log_memory("export_purchaseorders")
             logger.debug("Exporting manufacturing orders.")
             yield from self.export_manufacturingorders()
+            self._log_memory("export_manufacturingorders")
             logger.debug("Exporting reordering rules.")
             yield from self.export_orderpoints()
+            self._log_memory("export_orderpoints")
 
             if self.has_expiry:
                 logger.debug("Exporting stock orders.")
                 yield from self.export_stockorders()
+                self._log_memory("export_stockorders")
             else:
                 logger.debug("Exporting quantities on-hand.")
                 yield from self.export_onhand()
+                self._log_memory("export_onhand")
 
         # Footer
         yield "</plan>\n"
