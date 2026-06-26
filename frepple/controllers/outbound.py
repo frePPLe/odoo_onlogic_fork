@@ -279,6 +279,7 @@ class exporter(object):
         self.mode = mode
 
     def _log_memory(self, step_name):
+        self.env.cache.invalidate()
         process = psutil.Process(os.getpid())
         mem_info = process.memory_info()
         logger.info(
