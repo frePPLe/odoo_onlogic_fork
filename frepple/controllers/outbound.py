@@ -75,35 +75,44 @@ class Odoo_generator:
     ):
         if ids is not None:
             if object:
-                return self.env[model].browse(ids) if ids else []
+                for item in (self.env[model].browse(ids) if ids else []):
+                    yield item
             else:
-                return self.env[model].browse(ids).read(fields) if ids else []
+                for item in (self.env[model].browse(ids).read(fields) if ids else []):
+                    yield item
+            return
 
         # If a limit is specified, use a single query (no pagination)
         if limit is not None:
             if order:
                 if object:
-                    return self.env[model].search(
+                    for item in self.env[model].search(
                         search, order=order, limit=limit, offset=offset
-                    )
+                    ):
+                        yield item
                 else:
-                    return (
+                    for item in (
                         self.env[model]
                         .search(search, order=order, limit=limit, offset=offset)
                         .read(fields)
-                    )
+                    ):
+                        yield item
             else:
                 if object:
-                    return self.env[model].search(search, limit=limit, offset=offset)
+                    for item in self.env[model].search(
+                        search, limit=limit, offset=offset
+                    ):
+                        yield item
                 else:
-                    return (
+                    for item in (
                         self.env[model]
                         .search(search, limit=limit, offset=offset)
                         .read(fields)
-                    )
+                    ):
+                        yield item
+            return
 
-        # Paginate in chunks of pagesize records
-        results = [] if not object else self.env[model]
+        # Paginate in chunks of pagesize records - stream results
         while True:
             kwargs = {"limit": self.pagesize, "offset": offset}
             if order:
@@ -112,13 +121,14 @@ class Odoo_generator:
             if not chunk:
                 break
             if object:
-                results |= chunk
+                for item in chunk:
+                    yield item
             else:
-                results.extend(chunk.read(fields))
+                for item in chunk.read(fields):
+                    yield item
             if len(chunk) < self.pagesize:
                 break
             offset += self.pagesize
-        return results
 
 
 class XMLRPC_generator:
@@ -150,9 +160,19 @@ class XMLRPC_generator:
 
     def getData(self, model, search=None, order="id asc", fields=[], ids=[]):
         if ids:
-            page_ids = [ids]
+            # Stream data from a single page of IDs
+            for item in self.env.execute_kw(
+                self.db,
+                self.uid,
+                self.password,
+                model,
+                "read",
+                [ids],
+                {"fields": fields, "context": self.context},
+            ):
+                yield item
         else:
-            page_ids = []
+            # Paginate through all results and stream them
             offset = 0
             msg = {
                 "limit": self.pagesize,
@@ -172,26 +192,19 @@ class XMLRPC_generator:
                 )
                 if not extra_ids:
                     break
-                page_ids.append(extra_ids)
+                # Fetch and yield data for this page of IDs
+                for item in self.env.execute_kw(
+                    self.db,
+                    self.uid,
+                    self.password,
+                    model,
+                    "read",
+                    [extra_ids],
+                    {"fields": fields, "context": self.context},
+                ):
+                    yield item
                 offset += self.pagesize
                 msg["offset"] = offset
-        if page_ids and page_ids != [[]]:
-            data = []
-            for page in page_ids:
-                data.extend(
-                    self.env.execute_kw(
-                        self.db,
-                        self.uid,
-                        self.password,
-                        model,
-                        "read",
-                        [page],
-                        {"fields": fields, "context": self.context},
-                    )
-                )
-            return data
-        else:
-            return []
 
 
 class exporter(object):
@@ -234,32 +247,30 @@ class exporter(object):
         self.singlecompany = singlecompany
         self.delta = delta
         self.language = language
-        self.has_subcontracting = (
-            len(
-                self.generator.getData(
-                    "ir.module.module",
-                    search=[
-                        ("state", "=", "installed"),
-                        ("name", "=", "mrp_subcontracting"),
-                    ],
-                    fields=["id"],
-                )
-            )
-            > 0
-        )
-        self.has_expiry = (
-            len(
-                self.generator.getData(
-                    "ir.module.module",
-                    search=[
-                        ("state", "=", "installed"),
-                        ("name", "=", "mrp_product_expiry"),
-                    ],
-                    fields=["id"],
-                )
-            )
-            > 0
-        ) and "freppledb.shelflife" in apps
+        self.has_subcontracting = False
+        for _ in self.generator.getData(
+            "ir.module.module",
+            search=[
+                ("state", "=", "installed"),
+                ("name", "=", "mrp_subcontracting"),
+            ],
+            fields=["id"],
+        ):
+            self.has_subcontracting = True
+            break
+
+        self.has_expiry = False
+        if "freppledb.shelflife" in apps:
+            for _ in self.generator.getData(
+                "ir.module.module",
+                search=[
+                    ("state", "=", "installed"),
+                    ("name", "=", "mrp_product_expiry"),
+                ],
+                fields=["id"],
+            ):
+                self.has_expiry = True
+                break
 
         # The mode argument defines different types of runs:
         #  - Mode 1:
@@ -279,7 +290,7 @@ class exporter(object):
         self.mode = mode
 
     def _log_memory(self, step_name):
-        self.generator.env.cache.invalidate()
+        self.env.cache.invalidate()
         process = psutil.Process(os.getpid())
         mem_info = process.memory_info()
         logger.info(
@@ -889,14 +900,13 @@ class exporter(object):
             self.mfg_location = self.warehouses[self.mfg_location]
 
         # Populate a mapping location-to-warehouse name for later lookups
-        loc_ids = [
-            loc["id"]
-            for loc in self.generator.getData(
-                "stock.location",
-                search=[("usage", "=", "internal")],
-                fields=["id"],
-            )
-        ]
+        loc_ids = []
+        for loc in self.generator.getData(
+            "stock.location",
+            search=[("usage", "=", "internal")],
+            fields=["id"],
+        ):
+            loc_ids.append(loc["id"])
 
         for loc_object in self.generator.getData(
             "stock.location",
@@ -938,21 +948,22 @@ class exporter(object):
             logger.debug(
                 f"retrieving customer records from {offset} to {offset+pagesize}"
             )
-            recs = self.generator.getData(
+            recs_list = []
+            for i in self.generator.getData(
                 "res.partner",
                 fields=["name", "parent_id", "is_company"],
                 order="parent_id desc, id asc",
                 offset=offset,
                 limit=pagesize,
-            )
-            if len(recs) == 0:
-                break
-            offset += pagesize
-            for i in recs:
+            ):
+                recs_list.append(i)
                 if i["parent_id"]:
                     children.setdefault(i["parent_id"][0], []).append(i)
                 else:
                     roots.append(i)
+            if len(recs_list) == 0:
+                break
+            offset += pagesize
 
         ordered = []
 
