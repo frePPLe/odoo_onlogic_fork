@@ -347,7 +347,7 @@ class exporter(object):
         self._log_memory("export_locations")
         self.load_operation_types()
         logger.debug("Exporting customers.")
-        yield from self.export_customers()
+        self.export_customers()
         self._log_memory("export_customers")
         if self.mode == 1:
             logger.debug("Exporting suppliers.")
@@ -935,10 +935,8 @@ class exporter(object):
         Mapping:
         res.partner.id res.partner.name -> customer.name
         """
-        self.map_customers = {}
         # We also build in the loop the supplier map
         self.map_suppliers = {}
-        first = True
         individual_inserted = False
         offset = 0
         pagesize = 10000
@@ -978,29 +976,17 @@ class exporter(object):
         for i in ordered:
 
             # We don't kow that parent (archived ?) so continue
-            if i["parent_id"] and i["parent_id"][0] not in self.map_customers:
+            if i["parent_id"] and i["parent_id"][0] not in self.map_suppliers:
                 continue
 
-            if first:
-                yield "<!-- customers -->\n"
-                yield "<customers>\n"
-                first = False
             if i["is_company"]:
-                name = str(i["id"])
                 supplier = "%s (%s)" % (i["name"], i["id"])
-                yield '<customer name="%s" description=%s/>\n' % (
-                    name,
-                    quoteattr(i["name"]),
-                )
             elif i["parent_id"] == False or i["id"] == i["parent_id"][0]:
-                name = "Individuals"
                 supplier = "Individuals"
                 if not individual_inserted:
-                    yield "<customer name=%s/>\n" % quoteattr(name)
                     individual_inserted = True
             else:
-                if i["parent_id"][0] in self.map_customers:
-                    name = str(self.map_customers[i["parent_id"][0]])
+                if i["parent_id"][0] in self.map_suppliers:
                     supplier = "%s (%s)" % (
                         (i["parent_id"][1]),
                         i["parent_id"][0],
@@ -1008,11 +994,7 @@ class exporter(object):
                 else:
                     continue
 
-            self.map_customers[i["id"]] = name
             self.map_suppliers[i["id"]] = supplier
-
-        if not first:
-            yield "</customers>\n"
 
     def export_suppliers(self):
         """
@@ -1247,11 +1229,11 @@ class exporter(object):
         # Read the product templates
         self.product_product = {}
         self.product_templates = {}
-        self.routes = {
+        routes = {
             i["id"]: i for i in self.generator.getData("stock.route", fields=["name"])
         }
         self.route_mto = None
-        for k, v in self.routes.items():
+        for k, v in routes.items():
             if v["name"] == "Replenish on Order (MTO)":
                 self.route_mto = k
 
@@ -2193,26 +2175,22 @@ class exporter(object):
                 ("order_id.state", "not in", ("draft", "sent", "review")),
             ]
         )
-        so_line = self.generator.getData(
-            "sale.order.line",
-            search=search,
-            fields=[
-                "qty_delivered",
-                "state",
-                "product_id",
-                "product_uom_qty",
-                "product_uom",
-                "order_id",
-                "move_ids",
-            ],
-        )
 
         # Get all sales orders
         so = {
             i["id"]: i
             for i in self.generator.getData(
                 "sale.order",
-                ids=[j["order_id"][0] for j in so_line],
+                ids=[
+                    j["order_id"][0]
+                    for j in self.generator.getData(
+                        "sale.order.line",
+                        search=search,
+                        fields=[
+                            "order_id",
+                        ],
+                    )
+                ],
                 fields=[
                     "state",
                     "partner_id",
@@ -2267,7 +2245,19 @@ class exporter(object):
         yield "<!-- sales order lines -->\n"
         yield "<demands>\n"
 
-        for i in so_line:
+        for i in self.generator.getData(
+            "sale.order.line",
+            search=search,
+            fields=[
+                "qty_delivered",
+                "state",
+                "product_id",
+                "product_uom_qty",
+                "product_uom",
+                "order_id",
+                "move_ids",
+            ],
+        ):
             name = "%s %d" % (i["order_id"][1], i["id"])
             batch = i["order_id"][1]
             product = (
@@ -2658,6 +2648,10 @@ class exporter(object):
                         quoteattr(supplier),
                     )
         yield "</operationplans>\n"
+
+        # The supplier dict is not needed anymore
+        del self.map_suppliers
+        gc.collect()
 
     def export_manufacturingorders(self):
         """
