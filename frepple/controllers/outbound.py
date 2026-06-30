@@ -73,48 +73,53 @@ class Odoo_generator:
         limit=None,
         offset=0,
     ):
+        chunk_size = 1000  # Process records in chunks of 1000 to minimize memory usage
+
         if ids is not None:
-            if object:
-                for item in (self.env[model].browse(ids) if ids else []):
-                    yield item
-            else:
-                for item in (self.env[model].browse(ids).read(fields) if ids else []):
-                    yield item
+            # Process IDs in chunks to minimize memory consumption when dealing with large lists
+            if ids:
+                for i in range(0, len(ids), chunk_size):
+                    chunk_ids = ids[i : i + chunk_size]
+                    if object:
+                        for item in self.env[model].browse(chunk_ids):
+                            yield item
+                    else:
+                        for item in self.env[model].browse(chunk_ids).read(fields):
+                            yield item
             return
 
-        # If a limit is specified, use a single query (no pagination)
+        # If a limit is specified, still paginate to avoid OOM
         if limit is not None:
-            if order:
+            current_offset = offset
+            remaining = limit
+
+            while remaining > 0:
+                current_limit = min(chunk_size, remaining)
+                kwargs = {"limit": current_limit, "offset": current_offset}
+                if order:
+                    kwargs["order"] = order
+
+                chunk = self.env[model].search(search, **kwargs)
+                if not chunk:
+                    break
+
                 if object:
-                    for item in self.env[model].search(
-                        search, order=order, limit=limit, offset=offset
-                    ):
+                    for item in chunk:
                         yield item
                 else:
-                    for item in (
-                        self.env[model]
-                        .search(search, order=order, limit=limit, offset=offset)
-                        .read(fields)
-                    ):
+                    for item in chunk.read(fields):
                         yield item
-            else:
-                if object:
-                    for item in self.env[model].search(
-                        search, limit=limit, offset=offset
-                    ):
-                        yield item
-                else:
-                    for item in (
-                        self.env[model]
-                        .search(search, limit=limit, offset=offset)
-                        .read(fields)
-                    ):
-                        yield item
+
+                if len(chunk) < current_limit:
+                    break
+
+                current_offset += current_limit
+                remaining -= current_limit
             return
 
-        # Paginate in chunks of pagesize records - stream results
+        # Paginate in chunks of 1000 records - stream results
         while True:
-            kwargs = {"limit": self.pagesize, "offset": offset}
+            kwargs = {"limit": chunk_size, "offset": offset}
             if order:
                 kwargs["order"] = order
             chunk = self.env[model].search(search, **kwargs)
@@ -126,85 +131,9 @@ class Odoo_generator:
             else:
                 for item in chunk.read(fields):
                     yield item
-            if len(chunk) < self.pagesize:
+            if len(chunk) < chunk_size:
                 break
-            offset += self.pagesize
-
-
-class XMLRPC_generator:
-    pagesize = 5000
-
-    def __init__(self, url, db, username, password):
-        self.db = db
-        self.password = password
-        self.env = xmlrpc.client.ServerProxy(
-            "{}/xmlrpc/2/common".format(url),
-            context=ssl._create_unverified_context(),
-        )
-        self.uid = self.env.authenticate(db, username, password, {})
-        self.env = xmlrpc.client.ServerProxy(
-            "{}/xmlrpc/2/object".format(url),
-            context=ssl._create_unverified_context(),
-            use_builtin_types=True,
-            headers={"Connection": "keep-alive"}.items(),
-        )
-        self.context = {}
-
-    def setContext(self, **kwargs):
-        self.context.update(kwargs)
-
-    def callMethod(self, model, id, method, args):
-        return self.env.execute_kw(
-            self.db, self.uid, self.password, model, method, [id], []
-        )
-
-    def getData(self, model, search=None, order="id asc", fields=[], ids=[]):
-        if ids:
-            # Stream data from a single page of IDs
-            for item in self.env.execute_kw(
-                self.db,
-                self.uid,
-                self.password,
-                model,
-                "read",
-                [ids],
-                {"fields": fields, "context": self.context},
-            ):
-                yield item
-        else:
-            # Paginate through all results and stream them
-            offset = 0
-            msg = {
-                "limit": self.pagesize,
-                "offset": offset,
-                "context": self.context,
-                "order": order,
-            }
-            while True:
-                extra_ids = self.env.execute_kw(
-                    self.db,
-                    self.uid,
-                    self.password,
-                    model,
-                    "search",
-                    [search] if search else [[]],
-                    msg,
-                )
-                if not extra_ids:
-                    break
-                # Fetch and yield data for this page of IDs
-                for item in self.env.execute_kw(
-                    self.db,
-                    self.uid,
-                    self.password,
-                    model,
-                    "read",
-                    [extra_ids],
-                    {"fields": fields, "context": self.context},
-                ):
-                    yield item
-                offset += self.pagesize
-                msg["offset"] = offset
+            offset += chunk_size
 
 
 class exporter(object):
@@ -938,30 +867,19 @@ class exporter(object):
         # We also build in the loop the supplier map
         self.map_suppliers = {}
         individual_inserted = False
-        offset = 0
-        pagesize = 10000
+
         children = {}
         roots = []
-        while True:
-            logger.debug(
-                f"retrieving customer records from {offset} to {offset+pagesize}"
-            )
-            recs_list = []
-            for i in self.generator.getData(
-                "res.partner",
-                fields=["name", "parent_id", "is_company"],
-                order="parent_id desc, id asc",
-                offset=offset,
-                limit=pagesize,
-            ):
-                recs_list.append(i)
-                if i["parent_id"]:
-                    children.setdefault(i["parent_id"][0], []).append(i)
-                else:
-                    roots.append(i)
-            if len(recs_list) == 0:
-                break
-            offset += pagesize
+        for i in self.generator.getData(
+            "res.partner",
+            fields=["name", "parent_id", "is_company"],
+            order="parent_id desc, id asc",
+        ):
+
+            if i["parent_id"]:
+                children.setdefault(i["parent_id"][0], []).append(i)
+            else:
+                roots.append(i)
 
         ordered = []
 
@@ -1198,12 +1116,11 @@ class exporter(object):
         """
 
         # A first loop to get the archived items with a demand history
-        offset = 0
-        page_size = 20000
-        self.archived_product_ids = set()
 
-        while True:
-            chunk = self.generator.getData(
+        self.archived_product_ids = set()
+        self.archived_product_ids.add(
+            i["product_id"][0]
+            for i in self.generator.getData(
                 "sale.order.line",
                 search=[
                     "&",
@@ -1217,14 +1134,8 @@ class exporter(object):
                 fields=[
                     "product_id",
                 ],
-                offset=offset,
-                limit=page_size,
             )
-            if not chunk:
-                break
-            for i in chunk:
-                self.archived_product_ids.add(i["product_id"][0])
-            offset += page_size
+        )
 
         # Read the product templates
         self.product_product = {}
@@ -3337,61 +3248,3 @@ class exporter(object):
                 quoteattr(key[1]),
             )
         yield "</buffers>\n"
-
-
-if __name__ == "__main__":
-    #
-    # When calling this script directly as a Python file, the connector uses XMLRPC
-    # to connect to odoo and download all data.
-    #
-    # This is useful for debugging connector updates remotely, when you don't have
-    # direct access to the odoo server itself.
-    # This mode of working is not recommended for production use because of performance
-    # considerations.
-    #
-    # DEPRECATED EXPERIMENTAL FEATURE!!!
-    # This feature was always experimental, and we now see it as a dead end.
-    #
-    import argparse
-    from warnings import warn
-
-    warn("The XMLRPC odoo connector is deprecated", DeprecationWarning)
-
-    parser = argparse.ArgumentParser(description="Debug frepple odoo connector")
-    parser.add_argument(
-        "--url", help="URL of the odoo server", default="http://localhost:8069"
-    )
-    parser.add_argument("--db", help="Odoo database to connect to", default="odoo14")
-    parser.add_argument(
-        "--username", help="User name for the odoo connection", default="admin"
-    )
-    parser.add_argument(
-        "--password", help="User password for the odoo connection", default="admin"
-    )
-    parser.add_argument(
-        "--company", help="Odoo company to use", default="My Company (Chicago)"
-    )
-    parser.add_argument(
-        "--timezone", help="Time zone to convert odoo datetime fields to", default="UTC"
-    )
-    parser.add_argument(
-        "--singlecompany",
-        default=False,
-        help="Limit the data to a single company only.",
-        action="store_true",
-    )
-    args = parser.parse_args()
-
-    generator = XMLRPC_generator(args.url, args.db, args.username, args.password)
-    xp = exporter(
-        generator,
-        None,
-        uid=generator.uid,
-        database=generator.db,
-        company=args.company,
-        mode=1,
-        timezone=args.timezone,
-        singlecompany=True,
-    )
-    for i in xp.run():
-        print(i, end="")
