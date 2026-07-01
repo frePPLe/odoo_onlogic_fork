@@ -74,6 +74,14 @@ class Odoo_generator:
         offset=0,
     ):
         chunk_size = 1000  # Process records in chunks of 1000 to minimize memory usage
+        if fields and not object:
+            valid_fields = self.env[model]._fields
+            missing = [f for f in fields if f not in valid_fields]
+            if missing:
+                logger.warning(
+                    "Skipping unknown fields %s on model %s" % (missing, model)
+                )
+            fields = [f for f in fields if f in valid_fields]
 
         if ids is not None:
             # Process IDs in chunks to minimize memory consumption when dealing with large lists
@@ -1197,22 +1205,12 @@ class exporter(object):
             "sequence",
             "is_subcontractor",
         ]
-        try:
-            tmp = self.generator.getData(
-                "product.supplierinfo",
-                fields=supplierinfo_fields,
-                search=[("product_tmpl_id", "!=", False)],
-            )
-
-        except Exception:
-            # subcontracting module not installed
-            supplierinfo_fields.remove("is_subcontractor")
-            tmp = self.generator.getData(
-                "product.supplierinfo",
-                fields=supplierinfo_fields,
-                search=[("product_tmpl_id", "!=", False)],
-                order="sequence",
-            )
+        tmp = self.generator.getData(
+            "product.supplierinfo",
+            fields=supplierinfo_fields,
+            search=[("product_tmpl_id", "!=", False)],
+            order="sequence",
+        )
 
         itemsuppliers = {}
         for i in tmp:
